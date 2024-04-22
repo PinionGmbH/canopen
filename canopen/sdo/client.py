@@ -126,8 +126,8 @@ class SdoClient(SdoBase):
         retries_left = self.MAX_RETRIES
         if not self.responses.empty():
             # FIXME: Added to check if this occurs
-            raise RuntimeError("Unexpected message in the queue")
-            # logger.warning("There were unexpected messages in the queue")
+            # raise RuntimeWarning("Unexpected message in the queue")
+            logger.warning("There were unexpected messages in the queue")
             self.responses = queue.Queue()
         while True:
             self.send_request(sdo_request)
