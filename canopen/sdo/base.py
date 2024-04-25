@@ -71,6 +71,19 @@ class SdoBase(Mapping):
     def __contains__(self, key: Union[int, str]) -> bool:
         return key in self.od
 
+    def get_variable(
+        self, index: Union[int, str], subindex: int = 0
+    ) -> Optional["SdoVariable"]:
+        """Get the variable object at specified index (and subindex if applicable).
+
+        :return: SdoVariable if found, else `None`
+        """
+        obj = self.get(index)
+        if isinstance(obj, SdoVariable):
+            return obj
+        elif isinstance(obj, (SdoRecord, SdoArray)):
+            return obj.get(subindex)
+
     def upload(self, index: int, subindex: int) -> bytes:
         raise NotImplementedError()
 
@@ -170,6 +183,14 @@ class SdoVariable(variable.Variable):
         force_segment = self.od.data_type == objectdictionary.DOMAIN
         await self.sdo_node.adownload(self.od.index, self.od.subindex, data, force_segment)
 
+    @property
+    def writable(self) -> bool:
+        return self.od.writable
+
+    @property
+    def readable(self) -> bool:
+        return self.od.readable
+
     def open(self, mode="rb", encoding="ascii", buffering=1024, size=None,
              block_transfer=False, request_crc_support=True):
         """Open the data stream as a file like object.
@@ -211,6 +232,7 @@ class SdoVariable(variable.Variable):
         return await self.sdo_node.aopen(self.od.index, self.od.subindex, mode,
                                          encoding, buffering, size, block_transfer,
                                          request_crc_support=request_crc_support)
+
 
 # For compatibility
 Record = SdoRecord
