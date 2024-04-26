@@ -42,7 +42,7 @@ class Network(MutableMapping):
 
     def __init__(
             self,
-            bus: Optional[BusABC] = None,
+            bus: Optional[can.BusABC] = None,
             loop: Optional[AbstractEventLoop] = None):
         """
         :param can.BusABC bus:
