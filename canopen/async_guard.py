@@ -1,7 +1,7 @@
 """ Utils for async """
 
 import traceback
-from typing import Optional, Callab
+from typing import Optional, Callable
 
 TSentinel = Callable[[], bool]
 
