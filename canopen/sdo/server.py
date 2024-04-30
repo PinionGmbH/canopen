@@ -7,8 +7,7 @@ from canopen.sdo.exceptions import *
 from canopen.async_guard import ensure_not_async
 
 if TYPE_CHECKING:
-    from ..node.local import LocalNode
-
+    from canopen.node.local import LocalNode
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +248,7 @@ class SdoServer(SdoBase):
         data: bytes,
         force_segment: bool = False,
     ):
-        """May be called to make a write operation without an Object Dictionary. 
+        """May be called to make a write operation without an Object Dictionary.
 
         :param index:
             Index of object to write.

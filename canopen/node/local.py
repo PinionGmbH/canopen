@@ -11,7 +11,7 @@ from canopen.objectdictionary import ObjectDictionary
 from canopen import objectdictionary
 
 if TYPE_CHECKING:
-    from ..network import Network
+    from canopen.network import Network
 
 logger = logging.getLogger(__name__)
 

@@ -8,13 +8,9 @@ from canopen.emcy import EmcyConsumer
 from canopen.pdo import TPDO, RPDO, PDO
 from canopen.objectdictionary import ODRecord, ODArray, ODVariable, ObjectDictionary
 from canopen.node.base import BaseNode
-# from ..objectdictionary import Record, Array, Variable, List ?
-from canopen import objectdictionary
-import canopen
-
 
 if TYPE_CHECKING:
-    from ..network import Network
+    from canopen.network import Network
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +39,7 @@ class RemoteNode(BaseNode):
         #: Enable WORKAROUND for reversed PDO mapping entries
         self.curtis_hack = False
 
-        self.sdo_channels: List[SdoClient] = []
+        self.sdo_channels: list[SdoClient] = []
         self.sdo = self.add_sdo(0x600 + self.id, 0x580 + self.id)
         self.tpdo = TPDO(self)
         self.rpdo = RPDO(self)

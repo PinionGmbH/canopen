@@ -1,14 +1,14 @@
-from __future__ import annotations
 import struct
 import logging
 import threading
 import asyncio
 import time
 from typing import Callable, List, Optional, TYPE_CHECKING
-from .async_guard import ensure_not_async
+
+from canopen.async_guard import ensure_not_async
 
 if TYPE_CHECKING:
-    from .network import Network
+    from canopen.network import Network
 
 # Error code, error register, vendor specific data
 EMCY_STRUCT = struct.Struct("<HB5s")

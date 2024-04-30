@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .network import Network
+    from canopen.network import Network
 
 
 class SyncProducer:

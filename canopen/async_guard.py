@@ -1,6 +1,7 @@
 """ Utils for async """
+
 import functools
-import traceback
+#import traceback
 from typing import Optional, Callable
 
 TSentinel = Callable[[], bool]
@@ -26,9 +27,9 @@ def ensure_not_async(fn):
         global _ASYNC_SENTINEL
         if _ASYNC_SENTINEL:
             if _ASYNC_SENTINEL():
-                print("Traceback (most recent call last):")
-                for line in traceback.format_stack():
-                    print(line.strip())
+                #print("Traceback (most recent call last):")
+                #for line in traceback.format_stack():
+                #    print(line.strip())
                 raise RuntimeError("Calling a blocking function while running async")
         return fn(*args, **kwargs)
     return async_guard

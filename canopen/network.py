@@ -41,9 +41,10 @@ class Network(MutableMapping):
     """Representation of one CAN bus containing one or more nodes."""
 
     def __init__(
-            self,
-            bus: Optional[can.BusABC] = None,
-            loop: Optional[AbstractEventLoop] = None):
+        self,
+        bus: can.BusABC | None = None,
+        loop: AbstractEventLoop | None = None
+    ):
         """
         :param can.BusABC bus:
             A python-can bus instance to re-use.
@@ -137,7 +138,8 @@ class Network(MutableMapping):
             # async mode. This enables the @ensure_not_async() decorator to
             # work. See async_guard.py
             set_async_sentinel(self.is_async)
-        self.bus = can.Bus(*args, **kwargs)
+        if self.bus is None:
+            self.bus = can.Bus(*args, **kwargs)
         logger.info("Connected to '%s'", self.bus.channel_info)
         self.notifier = can.Notifier(self.bus, self.listeners, 1, **kwargs_notifier)
         return self

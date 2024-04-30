@@ -1,9 +1,9 @@
-from __future__ import annotations
 from typing import TextIO, Union, Optional, TYPE_CHECKING
+
 from canopen.objectdictionary import ObjectDictionary, import_od
 
 if TYPE_CHECKING:
-    from ..network import Network
+    from canopen.network import Network
 
 
 class BaseNode:

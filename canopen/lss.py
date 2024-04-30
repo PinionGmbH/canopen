@@ -1,4 +1,3 @@
-from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 import logging
 import time
@@ -8,10 +7,11 @@ try:
     import queue
 except ImportError:
     import Queue as queue
-from .async_guard import ensure_not_async
+
+from canopen.async_guard import ensure_not_async
 
 if TYPE_CHECKING:
-    from .network import Network
+    from canopen.network import Network
 
 logger = logging.getLogger(__name__)
 

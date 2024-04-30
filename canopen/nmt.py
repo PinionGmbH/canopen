@@ -1,4 +1,3 @@
-from __future__ import annotations
 import threading
 import logging
 import struct
@@ -6,12 +5,10 @@ import time
 import asyncio
 from typing import Callable, Optional, TYPE_CHECKING
 
-from canopen.network import CanError
 from canopen.async_guard import ensure_not_async
 
 if TYPE_CHECKING:
-    from .network import Network
-
+    from canopen.network import Network
 
 logger = logging.getLogger(__name__)
 

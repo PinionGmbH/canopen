@@ -73,7 +73,7 @@ class SdoClient(SdoBase):
                 logger.info(str(e))
                 if self.PAUSE_AFTER_SEND:
                     # NOTE: Blocking call
-                    time.sleep(0.1)
+                    time.sleep(self.PAUSE_AFTER_SEND)
             else:
                 break
 
@@ -91,7 +91,7 @@ class SdoClient(SdoBase):
                     raise
                 logger.info(str(e))
                 if self.PAUSE_AFTER_SEND:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(self.PAUSE_AFTER_SEND)
             else:
                 break
 
@@ -126,7 +126,7 @@ class SdoClient(SdoBase):
         retries_left = self.MAX_RETRIES
         if not self.responses.empty():
             # FIXME: Added to check if this occurs
-            # raise RuntimeWarning("Unexpected message in the queue")
+            #raise RuntimeError("Unexpected message in the queue")
             logger.warning("There were unexpected messages in the queue")
             self.responses = queue.Queue()
         while True:
@@ -151,7 +151,7 @@ class SdoClient(SdoBase):
             except SdoCommunicationError as e:
                 retries_left -= 1
                 if not retries_left:
-                    await self.aabort(0x5040000)
+                    self.aabort(0x5040000)
                     raise
                 logger.warning(str(e))
 

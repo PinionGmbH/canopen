@@ -10,13 +10,13 @@ import logging
 import binascii
 import asyncio
 
-if TYPE_CHECKING:
-    from ..network import Network
-
 from canopen.sdo import SdoAbortedError
 from canopen import objectdictionary
 from canopen import variable
 from canopen.async_guard import ensure_not_async
+
+if TYPE_CHECKING:
+    from canopen.network import Network
 
 PDO_NOT_VALID = 1 << 31
 RTR_NOT_ALLOWED = 1 << 30
@@ -730,6 +730,7 @@ class PdoVariable(variable.Variable):
         # As long as get_data() is not making any IO, it can be called
         # directly with no special async variant
         return self.set_data(data)
+
 
 # For compatibility
 Variable = PdoVariable
