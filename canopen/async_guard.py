@@ -1,5 +1,5 @@
 """ Utils for async """
-
+import functools
 import traceback
 from typing import Optional, Callable
 
