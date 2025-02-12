@@ -9,6 +9,7 @@ import logging
 import binascii
 
 from canopen.sdo import SdoAbortedError
+from canopen.pdo.exceptions import PdoReadError
 from canopen import objectdictionary
 from canopen import variable
 
@@ -52,8 +53,16 @@ class PdoBase(Mapping):
 
     def read(self, from_od=False):
         """Read PDO configuration from node using SDO."""
-        for pdo_map in self.map.values():
-            pdo_map.read(from_od=from_od)
+        failed_pdo_ids = []
+        for key, pdo_map in self.map.items():
+            try:
+                pdo_map.read(from_od=from_od)
+            except SdoAbortedError:
+                failed_pdo_ids.append(key)
+        for key in failed_pdo_ids:
+            self.map.pop(key)
+        if failed_pdo_ids:
+            raise PdoReadError(failed_pdo_ids)
 
     def save(self):
         """Save PDO configuration to node using SDO."""
@@ -154,6 +163,9 @@ class Maps(Mapping):
 
     def __len__(self) -> int:
         return len(self.maps)
+
+    def pop(self, key: int):
+        self.maps.pop(key)
 
 
 class Map:
