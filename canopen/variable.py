@@ -1,11 +1,12 @@
+from __future__ import annotations
+
 import logging
+from collections.abc import Collection, Mapping
 from typing import Union
-try:
-    from collections.abc import Mapping
-except ImportError:
-    from collections import Mapping
 
 from canopen import objectdictionary
+from canopen.utils import pretty_index
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,12 @@ class Variable:
         self.index = od.index
         #: Holds a local, overridable copy of the Object Subindex
         self.subindex = od.subindex
+
+    def __repr__(self) -> str:
+        subindex = self.subindex if isinstance(self.od.parent,
+            (objectdictionary.ODRecord, objectdictionary.ODArray)
+        ) else None
+        return f"<{type(self).__qualname__} {self.name!r} at {pretty_index(self.index, subindex)}>"
 
     def get_data(self) -> bytes:
         raise NotImplementedError("Variable is not readable")
@@ -58,11 +65,9 @@ class Variable:
         +---------------------------+----------------------------+
         | REALxx                    | :class:`float`             |
         +---------------------------+----------------------------+
-        | VISIBLE_STRING            | :class:`str` /             |
-        |                           | ``unicode`` (Python 2)     |
+        | VISIBLE_STRING            | :class:`str`               |
         +---------------------------+----------------------------+
-        | UNICODE_STRING            | :class:`str` /             |
-        |                           | ``unicode`` (Python 2)     |
+        | UNICODE_STRING            | :class:`str`               |
         +---------------------------+----------------------------+
         | OCTET_STRING              | :class:`bytes`             |
         +---------------------------+----------------------------+
@@ -73,17 +78,18 @@ class Variable:
         written as :class:`bytes`.
         """
         value = self.od.decode_raw(self.data)
-        text = "Value of %s (0x%X:%d) is %r" % (
-            self.name, self.index,
-            self.subindex, value)
-        if value in self.od.value_descriptions:
-            text += " (%s)" % self.od.value_descriptions[value]
+        text = f"Value of {self.name!r} ({pretty_index(self.index, self.subindex)}) is {value!r}"
+        if (
+            isinstance(value, int)
+            and (desc := self.od.value_descriptions.get(value)) is not None
+        ):
+            text += f" ({desc})"
         logger.debug(text)
         return value
 
     @raw.setter
     def raw(self, value: Union[int, bool, float, str, bytes]):
-        logger.debug("Writing %s (0x%X:%d) = %r",
+        logger.debug("Writing %r (0x%04X:%02X) = %r",
                      self.name, self.index,
                      self.subindex, value)
         self.data = self.od.encode_raw(value)
@@ -107,8 +113,14 @@ class Variable:
 
     @property
     def desc(self) -> str:
-        """Converts to and from a description of the value as a string."""
-        value = self.od.decode_desc(self.raw)
+        """Convert to and from a description of the value as a string.
+
+        :raises TypeError: If the received raw data was anything but an integer value.
+        """
+        raw_int = self.raw
+        if not isinstance(raw_int, int):
+            raise TypeError("Description of values only supported for integer objects")
+        value = self.od.decode_desc(raw_int)
         logger.debug("Description is '%s'", value)
         return value
 
@@ -117,7 +129,7 @@ class Variable:
         self.raw = self.od.encode_desc(desc)
 
     @property
-    def bits(self) -> "Bits":
+    def bits(self) -> Bits:
         """Access bits using integers, slices, or bit descriptions."""
         return Bits(self)
 
@@ -134,6 +146,7 @@ class Variable:
 
         :returns:
             The value of the variable.
+        :raises ValueError: For unsupported fmt values.
         """
         if fmt == "raw":
             return self.raw
@@ -141,9 +154,12 @@ class Variable:
             return self.phys
         elif fmt == "desc":
             return self.desc
+        raise ValueError(f"Invalid format '{fmt}'")
 
     def write(
-        self, value: Union[int, bool, float, str, bytes], fmt: str = "raw"
+        self,
+        value: Union[int, bool, float, str, bytes],
+        fmt: str = "raw",
     ) -> None:
         """Alternative way of writing using a function instead of attributes.
 
@@ -154,35 +170,41 @@ class Variable:
              - 'raw'
              - 'phys'
              - 'desc'
+        :raises TypeError: If the "desc" format was specified with anything but a string value.
         """
         if fmt == "raw":
             self.raw = value
         elif fmt == "phys":
             self.phys = value
         elif fmt == "desc":
+            if not isinstance(value, str):
+                raise TypeError("fmt=desc requires a string value")
             self.desc = value
 
 
 class Bits(Mapping):
 
     def __init__(self, variable: Variable):
+        assert variable.od.data_type in objectdictionary.datatypes.INTEGER_TYPES
         self.variable = variable
         self.read()
+        self.raw: int
 
     @staticmethod
-    def _get_bits(key):
+    def _get_bits(key: Union[slice, int, str, Collection[int]]) -> Union[str, Collection[int]]:
         if isinstance(key, slice):
-            bits = range(key.start, key.stop, key.step)
-        elif isinstance(key, int):
-            bits = [key]
-        else:
-            bits = key
-        return bits
+            if key.stop is None:
+                raise IndexError("Bits cannot be enumerated from open-ended slice")
+            else:
+                return range(key.start or 0, key.stop, key.step or 1)
+        if isinstance(key, int):
+            return [key]
+        return key
 
-    def __getitem__(self, key) -> int:
+    def __getitem__(self, key: Union[slice, int, str, Collection[int]]) -> int:
         return self.variable.od.decode_bits(self.raw, self._get_bits(key))
 
-    def __setitem__(self, key, value: int):
+    def __setitem__(self, key: Union[slice, int, str, Collection[int]], value: int):
         self.raw = self.variable.od.encode_bits(
             self.raw, self._get_bits(key), value)
         self.write()
@@ -194,7 +216,8 @@ class Bits(Mapping):
         return len(self.variable.od.bit_definitions)
 
     def read(self):
-        self.raw = self.variable.raw
+        assert isinstance(raw_int := self.variable.raw, int)
+        self.raw = raw_int
 
     def write(self):
         self.variable.raw = self.raw

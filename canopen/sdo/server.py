@@ -4,6 +4,7 @@ from canopen.sdo.base import SdoBase
 from canopen.sdo.constants import *
 from canopen.sdo.exceptions import *
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,11 +48,11 @@ class SdoServer(SdoBase):
             elif ccs == REQUEST_ABORTED:
                 self.request_aborted(data)
             else:
-                self.abort(0x05040001)
+                self.abort(ABORT_INVALID_COMMAND_SPECIFIER)
         except SdoAbortedError as exc:
             self.abort(exc.code)
         except KeyError as exc:
-            self.abort(0x06020000)
+            self.abort(ABORT_NOT_IN_OD)
         except Exception as exc:
             self.abort()
             logger.exception(exc)
@@ -65,13 +66,17 @@ class SdoServer(SdoBase):
 
         data = self._node.get_data(index, subindex, check_readable=True)
         size = len(data)
-        if size <= 4:
-            logger.info("Expedited upload for 0x%X:%d", index, subindex)
+        if size == 0:
+            logger.info("No content to upload for 0x%04X:%02X", index, subindex)
+            self.abort(ABORT_NO_DATA_AVAILABLE)
+            return
+        elif size <= 4:
+            logger.info("Expedited upload for 0x%04X:%02X", index, subindex)
             res_command |= EXPEDITED
             res_command |= (4 - size) << 2
             response[4:4 + size] = data
         else:
-            logger.info("Initiating segmented upload for 0x%X:%d", index, subindex)
+            logger.info("Initiating segmented upload for 0x%04X:%02X", index, subindex)
             struct.pack_into("<L", response, 4, size)
             self._buffer = bytearray(data)
             self._toggle = 0
@@ -82,7 +87,7 @@ class SdoServer(SdoBase):
     def segmented_upload(self, command):
         if command & TOGGLE_BIT != self._toggle:
             # Toggle bit mismatch
-            raise SdoAbortedError(0x05030000)
+            raise SdoAbortedError(ABORT_TOGGLE_NOT_ALTERNATED)
         data = self._buffer[:7]
         size = len(data)
 
@@ -115,12 +120,16 @@ class SdoServer(SdoBase):
     def request_aborted(self, data):
         _, index, subindex, code = struct.unpack_from("<BHBL", data)
         self.last_received_error = code
-        logger.info("Received request aborted for 0x%X:%d with code 0x%X", index, subindex, code)
+        logger.info("Received request aborted for 0x%04X:%02X with code 0x%X", index, subindex, code)
 
     def block_download(self, data):
         # We currently don't support BLOCK DOWNLOAD
+        # Unpack the index and subindex in order to send appropriate abort
+        command, index, subindex = SDO_STRUCT.unpack_from(data)
+        self._index = index
+        self._subindex = subindex
         logger.error("Block download is not supported")
-        self.abort(0x05040001)
+        self.abort(ABORT_INVALID_COMMAND_SPECIFIER)
 
     def init_download(self, request):
         # TODO: Check if writable (now would fail on end of segmented downloads)
@@ -131,14 +140,14 @@ class SdoServer(SdoBase):
         response = bytearray(8)
 
         if command & EXPEDITED:
-            logger.info("Expedited download for 0x%X:%d", index, subindex)
+            logger.info("Expedited download for 0x%04X:%02X", index, subindex)
             if command & SIZE_SPECIFIED:
                 size = 4 - ((command >> 2) & 0x3)
             else:
                 size = 4
             self._node.set_data(index, subindex, request[4:4 + size], check_writable=True)
         else:
-            logger.info("Initiating segmented download for 0x%X:%d", index, subindex)
+            logger.info("Initiating segmented download for 0x%04X:%02X", index, subindex)
             if command & SIZE_SPECIFIED:
                 size, = struct.unpack_from("<L", request, 4)
                 logger.info("Size is %d bytes", size)
@@ -151,7 +160,7 @@ class SdoServer(SdoBase):
     def segmented_download(self, command, request):
         if command & TOGGLE_BIT != self._toggle:
             # Toggle bit mismatch
-            raise SdoAbortedError(0x05030000)
+            raise SdoAbortedError(ABORT_TOGGLE_NOT_ALTERNATED)
         last_byte = 8 - ((command >> 1) & 0x7)
         self._buffer.extend(request[1:last_byte])
 
@@ -174,12 +183,12 @@ class SdoServer(SdoBase):
     def send_response(self, response):
         self.network.send_message(self.tx_cobid, response)
 
-    def abort(self, abort_code=0x08000000):
+    def abort(self, abort_code=ABORT_GENERAL_ERROR):
         """Abort current transfer."""
         data = struct.pack("<BHBL", RESPONSE_ABORTED,
                            self._index, self._subindex, abort_code)
         self.send_response(data)
-        # logger.error("Transfer aborted with code 0x{:08X}".format(abort_code))
+        # logger.error("Transfer aborted with code 0x%08X", abort_code)
 
     def upload(self, index: int, subindex: int) -> bytes:
         """May be called to make a read operation without an Object Dictionary.
@@ -203,7 +212,7 @@ class SdoServer(SdoBase):
         data: bytes,
         force_segment: bool = False,
     ):
-        """May be called to make a write operation without an Object Dictionary. 
+        """May be called to make a write operation without an Object Dictionary.
 
         :param index:
             Index of object to write.

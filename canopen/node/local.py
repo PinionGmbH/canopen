@@ -1,18 +1,38 @@
-import logging
-from typing import Dict, Union
+from __future__ import annotations
 
-from canopen.node.base import BaseNode
-from canopen.sdo import SdoServer, SdoAbortedError
-from canopen.pdo import PDO, TPDO, RPDO
-from canopen.nmt import NmtSlave
-from canopen.emcy import EmcyProducer
-from canopen.objectdictionary import ObjectDictionary
+import logging
+from collections.abc import Callable
+from typing import Union
+
+import canopen.network
 from canopen import objectdictionary
+from canopen.emcy import EmcyProducer
+from canopen.nmt import NmtSlave
+from canopen.node.base import BaseNode
+from canopen.objectdictionary import ObjectDictionary
+from canopen.pdo import PDO, RPDO, TPDO
+from canopen.sdo import SdoAbortedError, SdoServer
+
 
 logger = logging.getLogger(__name__)
 
 
 class LocalNode(BaseNode):
+    """Local CANopen node implementing essential communication services.
+
+    This does not provide a full-fledged communication logic stack, but needs
+    additional application logic to wire up the various services, such as
+    triggering PDO transmissions according to their communication parameters.
+
+    Notable exceptions are a local data store for SDO server access, and using
+    the Heartbeat Producer Time parameter to control Heartbeat transmission.
+
+    :param node_id:
+        Node ID (set to 0 if specified by object dictionary)
+    :param object_dictionary:
+        Object dictionary as either a path to a file, an ``ObjectDictionary``
+        or a file like object.
+    """
 
     def __init__(
         self,
@@ -21,9 +41,9 @@ class LocalNode(BaseNode):
     ):
         super(LocalNode, self).__init__(node_id, object_dictionary)
 
-        self.data_store: Dict[int, Dict[int, bytes]] = {}
-        self._read_callbacks = []
-        self._write_callbacks = []
+        self.data_store: dict[int, dict[int, bytes]] = {}
+        self._read_callbacks: list[Callable] = []
+        self._write_callbacks: list[Callable] = []
 
         self.sdo = SdoServer(0x600 + self.id, 0x580 + self.id, self)
         self.tpdo = TPDO(self)
@@ -34,7 +54,9 @@ class LocalNode(BaseNode):
         self.add_write_callback(self.nmt.on_write)
         self.emcy = EmcyProducer(0x80 + self.id)
 
-    def associate_network(self, network):
+    def associate_network(self, network: canopen.network.Network):
+        if self.has_network():
+            raise RuntimeError("Node is already associated with a network")
         self.network = network
         self.sdo.network = network
         self.tpdo.network = network
@@ -44,20 +66,22 @@ class LocalNode(BaseNode):
         network.subscribe(self.sdo.rx_cobid, self.sdo.on_request)
         network.subscribe(0, self.nmt.on_command)
 
-    def remove_network(self):
+    def remove_network(self) -> None:
+        if not self.has_network():
+            return
         self.network.unsubscribe(self.sdo.rx_cobid, self.sdo.on_request)
         self.network.unsubscribe(0, self.nmt.on_command)
-        self.network = None
-        self.sdo.network = None
-        self.tpdo.network = None
-        self.rpdo.network = None
-        self.nmt.network = None
-        self.emcy.network = None
+        self.network = canopen.network._UNINITIALIZED_NETWORK
+        self.sdo.network = canopen.network._UNINITIALIZED_NETWORK
+        self.tpdo.network = canopen.network._UNINITIALIZED_NETWORK
+        self.rpdo.network = canopen.network._UNINITIALIZED_NETWORK
+        self.nmt.network = canopen.network._UNINITIALIZED_NETWORK
+        self.emcy.network = canopen.network._UNINITIALIZED_NETWORK
 
-    def add_read_callback(self, callback):
+    def add_read_callback(self, callback: Callable):
         self._read_callbacks.append(callback)
 
-    def add_write_callback(self, callback):
+    def add_write_callback(self, callback: Callable):
         self._write_callbacks.append(callback)
 
     def get_data(
@@ -86,7 +110,7 @@ class LocalNode(BaseNode):
                 return obj.encode_raw(obj.default)
 
         # Resource not available
-        logger.info("Resource unavailable for 0x%X:%d", index, subindex)
+        logger.info("Resource unavailable for 0x%04X:%02X", index, subindex)
         raise SdoAbortedError(0x060A0023)
 
     def set_data(

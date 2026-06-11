@@ -1,13 +1,13 @@
-import binascii
-from typing import Iterable, Union
-try:
-    from collections.abc import Mapping
-except ImportError:
-    from collections import Mapping
+from __future__ import annotations
 
+import binascii
+from collections.abc import Iterator, Mapping
+from typing import Optional, Union
+
+import canopen.network
 from canopen import objectdictionary
-from canopen.objectdictionary import ObjectDictionary
 from canopen import variable
+from canopen.utils import pretty_index
 
 
 class CrcXmodem:
@@ -32,7 +32,7 @@ class SdoBase(Mapping):
         self,
         rx_cobid: int,
         tx_cobid: int,
-        od: ObjectDictionary,
+        od: objectdictionary.ObjectDictionary,
     ):
         """
         :param rx_cobid:
@@ -44,12 +44,12 @@ class SdoBase(Mapping):
         """
         self.rx_cobid = rx_cobid
         self.tx_cobid = tx_cobid
-        self.network = None
+        self.network: canopen.network.Network = canopen.network._UNINITIALIZED_NETWORK
         self.od = od
 
     def __getitem__(
         self, index: Union[str, int]
-    ) -> Union["SdoVariable", "SdoArray", "SdoRecord"]:
+    ) -> Union[SdoVariable, SdoArray, SdoRecord]:
         entry = self.od[index]
         if isinstance(entry, objectdictionary.ODVariable):
             return SdoVariable(self, entry)
@@ -58,14 +58,28 @@ class SdoBase(Mapping):
         elif isinstance(entry, objectdictionary.ODRecord):
             return SdoRecord(self, entry)
 
-    def __iter__(self) -> Iterable[int]:
+    def __iter__(self) -> Iterator[int]:
         return iter(self.od)
 
     def __len__(self) -> int:
         return len(self.od)
 
-    def __contains__(self, key: Union[int, str]) -> bool:
+    def __contains__(self, key: object) -> bool:
         return key in self.od
+
+    def get_variable(
+        self, index: Union[int, str], subindex: int = 0
+    ) -> Optional[SdoVariable]:
+        """Get the variable object at specified index (and subindex if applicable).
+
+        :return: SdoVariable if found, else `None`
+        """
+        obj = self.get(index)
+        if isinstance(obj, SdoVariable):
+            return obj
+        elif isinstance(obj, (SdoRecord, SdoArray)):
+            return obj.get(subindex)
+        return None
 
     def upload(self, index: int, subindex: int) -> bytes:
         raise NotImplementedError()
@@ -82,55 +96,85 @@ class SdoBase(Mapping):
 
 class SdoRecord(Mapping):
 
-    def __init__(self, sdo_node: SdoBase, od: ObjectDictionary):
+    def __init__(self, sdo_node: SdoBase, od: objectdictionary.ODRecord):
         self.sdo_node = sdo_node
         self.od = od
 
-    def __getitem__(self, subindex: Union[int, str]) -> "SdoVariable":
+    def __repr__(self) -> str:
+        return f"<{type(self).__qualname__} {self.od.name!r} at {pretty_index(self.od.index)}>"
+
+    def __getitem__(self, subindex: Union[int, str]) -> SdoVariable:
         return SdoVariable(self.sdo_node, self.od[subindex])
 
-    def __iter__(self) -> Iterable[int]:
-        return iter(self.od)
+    def __iter__(self) -> Iterator[int]:
+        # Skip the "highest subindex" entry, which is not part of the data
+        return filter(None, iter(self.od))
 
     def __len__(self) -> int:
-        return len(self.od)
+        # Skip the "highest subindex" entry, which is not part of the data
+        return len(self.od) - int(0 in self.od)
 
-    def __contains__(self, subindex: Union[int, str]) -> bool:
+    def __contains__(self, subindex: object) -> bool:
         return subindex in self.od
 
 
 class SdoArray(Mapping):
 
-    def __init__(self, sdo_node: SdoBase, od: ObjectDictionary):
+    def __init__(self, sdo_node: SdoBase, od: objectdictionary.ODArray):
         self.sdo_node = sdo_node
         self.od = od
 
-    def __getitem__(self, subindex: Union[int, str]) -> "SdoVariable":
+    def __repr__(self) -> str:
+        return f"<{type(self).__qualname__} {self.od.name!r} at {pretty_index(self.od.index)}>"
+
+    def __getitem__(self, subindex: Union[int, str]) -> SdoVariable:
         return SdoVariable(self.sdo_node, self.od[subindex])
 
-    def __iter__(self) -> Iterable[int]:
+    def __iter__(self) -> Iterator[int]:
+        # Skip the "highest subindex" entry, which is not part of the data
         return iter(range(1, len(self) + 1))
 
     def __len__(self) -> int:
         return self[0].raw
 
-    def __contains__(self, subindex: int) -> bool:
+    def __contains__(self, subindex: object) -> bool:
+        if not isinstance(subindex, int):
+            return False
         return 0 <= subindex <= len(self)
 
 
 class SdoVariable(variable.Variable):
     """Access object dictionary variable values using SDO protocol."""
 
-    def __init__(self, sdo_node: SdoBase, od: ObjectDictionary):
+    def __init__(self, sdo_node: SdoBase, od: objectdictionary.ODVariable):
         self.sdo_node = sdo_node
         variable.Variable.__init__(self, od)
 
     def get_data(self) -> bytes:
-        return self.sdo_node.upload(self.od.index, self.od.subindex)
+        data = self.sdo_node.upload(self.od.index, self.od.subindex)
+        response_size = len(data)
+
+        # If size is available through variable in OD, then use the smaller of the two sizes.
+        # Some devices send U32/I32 even if variable is smaller in OD
+        if self.od.fixed_size:
+            # Get the size in bytes for this variable
+            var_size = len(self.od) // 8
+            if response_size is None or var_size < response_size:
+                # Truncate the data to specified size
+                data = data[:var_size]
+        return data
 
     def set_data(self, data: bytes):
         force_segment = self.od.data_type == objectdictionary.DOMAIN
         self.sdo_node.download(self.od.index, self.od.subindex, data, force_segment)
+
+    @property
+    def writable(self) -> bool:
+        return self.od.writable
+
+    @property
+    def readable(self) -> bool:
+        return self.od.readable
 
     def open(self, mode="rb", encoding="ascii", buffering=1024, size=None,
              block_transfer=False, request_crc_support=True):

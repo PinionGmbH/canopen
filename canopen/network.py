@@ -1,29 +1,20 @@
-try:
-    from collections.abc import MutableMapping
-except ImportError:
-    from collections import MutableMapping
+from __future__ import annotations
+
 import logging
 import threading
-from typing import Callable, Dict, Iterable, List, Optional, Union
+from collections.abc import Iterator, MutableMapping
+from typing import Callable, Final, Optional, Union
 
-try:
-    import can
-    from can import Listener
-    from can import CanError
-except ImportError:
-    # Do not fail if python-can is not installed
-    can = None
-    CanError = Exception
-    class Listener:
-        """ Dummy listener """
+import can
 
-from canopen.node import RemoteNode, LocalNode
+from canopen.lss import LssMaster
+from canopen.nmt import NmtMaster
+from canopen.node import LocalNode, RemoteNode
+from canopen.objectdictionary import ObjectDictionary
+from canopen.objectdictionary.eds import import_from_node
 from canopen.sync import SyncProducer
 from canopen.timestamp import TimeProducer
-from canopen.nmt import NmtMaster
-from canopen.lss import LssMaster
-from canopen.objectdictionary.eds import import_from_node
-from canopen.objectdictionary import ObjectDictionary
+
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +24,10 @@ Callback = Callable[[int, bytearray, float], None]
 class Network(MutableMapping):
     """Representation of one CAN bus containing one or more nodes."""
 
-    def __init__(self, bus: can.BusABC | None = None):
+    NOTIFIER_CYCLE: float = 1.0  #: Maximum waiting time for one notifier iteration.
+    NOTIFIER_SHUTDOWN_TIMEOUT: float = 5.0  #: Maximum waiting time to stop notifiers.
+
+    def __init__(self, bus: Optional[can.BusABC] = None):
         """
         :param can.BusABC bus:
             A python-can bus instance to re-use.
@@ -45,10 +39,10 @@ class Network(MutableMapping):
         self.scanner = NodeScanner(self)
         #: List of :class:`can.Listener` objects.
         #: Includes at least MessageListener.
-        self.listeners = [MessageListener(self)]
-        self.notifier = None
-        self.nodes: Dict[int, Union[RemoteNode, LocalNode]] = {}
-        self.subscribers: Dict[int, List[Callback]] = {}
+        self.listeners: list[can.Listener] = [MessageListener(self)]
+        self.notifier: Optional[can.Notifier] = None
+        self.nodes: dict[int, Union[RemoteNode, LocalNode]] = {}
+        self.subscribers: dict[int, list[Callback]] = {}
         self.send_lock = threading.Lock()
         self.sync = SyncProducer(self)
         self.time = TimeProducer(self)
@@ -80,12 +74,12 @@ class Network(MutableMapping):
             If given, remove only this callback.  Otherwise all callbacks for
             the CAN ID.
         """
-        if callback is None:
-            del self.subscribers[can_id]
-        else:
+        if callback is not None:
             self.subscribers[can_id].remove(callback)
+        if not self.subscribers[can_id] or callback is None:
+            del self.subscribers[can_id]
 
-    def connect(self, *args, **kwargs) -> "Network":
+    def connect(self, *args, **kwargs) -> Network:
         """Connect to CAN bus using python-can.
 
         Arguments are passed directly to :class:`can.BusABC`. Typically these
@@ -93,7 +87,7 @@ class Network(MutableMapping):
 
         :param channel:
             Backend specific channel for the CAN interface.
-        :param str bustype:
+        :param str interface:
             Name of the interface. See
             `python-can manual <https://python-can.readthedocs.io/en/stable/configuration.html#interface-names>`__
             for full list of supported interfaces.
@@ -113,7 +107,8 @@ class Network(MutableMapping):
         if self.bus is None:
             self.bus = can.Bus(*args, **kwargs)
         logger.info("Connected to '%s'", self.bus.channel_info)
-        self.notifier = can.Notifier(self.bus, self.listeners, 1)
+        if self.notifier is None:
+            self.notifier = can.Notifier(self.bus, self.listeners, self.NOTIFIER_CYCLE)
         return self
 
     def disconnect(self) -> None:
@@ -125,11 +120,15 @@ class Network(MutableMapping):
             if hasattr(node, "pdo"):
                 node.pdo.stop()
         if self.notifier is not None:
-            self.notifier.stop()
+            self.notifier.stop(self.NOTIFIER_SHUTDOWN_TIMEOUT)
         if self.bus is not None:
             self.bus.shutdown()
         self.bus = None
-        self.check()
+        try:
+            self.check()
+        finally:
+            # Release notifier after check
+            self.notifier = None
 
     def __enter__(self):
         return self
@@ -142,7 +141,7 @@ class Network(MutableMapping):
         node: Union[int, RemoteNode, LocalNode],
         object_dictionary: Union[str, ObjectDictionary, None] = None,
         upload_eds: bool = False,
-    ) -> RemoteNode:
+    ) -> Union[RemoteNode, LocalNode]:
         """Add a remote node to the network.
 
         :param node:
@@ -168,7 +167,7 @@ class Network(MutableMapping):
 
     def create_node(
         self,
-        node: int,
+        node: Union[int, LocalNode],
         object_dictionary: Union[str, ObjectDictionary, None] = None,
     ) -> LocalNode:
         """Create a local node in the network.
@@ -217,7 +216,7 @@ class Network(MutableMapping):
 
     def send_periodic(
         self, can_id: int, data: bytes, period: float, remote: bool = False
-    ) -> "PeriodicMessageTask":
+    ) -> PeriodicMessageTask:
         """Start sending a message periodically.
 
         :param can_id:
@@ -280,11 +279,26 @@ class Network(MutableMapping):
         self.nodes[node_id].remove_network()
         del self.nodes[node_id]
 
-    def __iter__(self) -> Iterable[int]:
+    def __iter__(self) -> Iterator[int]:
         return iter(self.nodes)
 
     def __len__(self) -> int:
         return len(self.nodes)
+
+
+class _UninitializedNetwork(Network):
+    """Empty network implementation as a placeholder before actual initialization."""
+
+    def __init__(self, bus: Optional[can.BusABC] = None):
+        """Do not initialize attributes, by skipping the parent constructor."""
+
+    def __getattribute__(self, name):
+        raise RuntimeError("No actual Network object was assigned, "
+                           "try associating to a real network first.")
+
+
+#: Singleton instance
+_UNINITIALIZED_NETWORK: Final[Network] = _UninitializedNetwork()
 
 
 class PeriodicMessageTask:
@@ -301,7 +315,7 @@ class PeriodicMessageTask:
         bus,
         remote: bool = False,
     ):
-        """ 
+        """
         :param can_id:
             CAN-ID of the message
         :param data:
@@ -316,7 +330,6 @@ class PeriodicMessageTask:
         self.msg = can.Message(is_extended_id=can_id > 0x7FF,
                                arbitration_id=can_id,
                                data=data, is_remote_frame=remote)
-        self._task = None
         self._start()
 
     def _start(self):
@@ -343,7 +356,7 @@ class PeriodicMessageTask:
             self._start()
 
 
-class MessageListener(Listener):
+class MessageListener(can.Listener):
     """Listens for messages on CAN bus and feeds them to a Network instance.
 
     :param network:
@@ -363,6 +376,9 @@ class MessageListener(Listener):
             # Exceptions in any callbaks should not affect CAN processing
             logger.error(str(e))
 
+    def stop(self) -> None:
+        """Override abstract base method to release any resources."""
+
 
 class NodeScanner:
     """Observes which nodes are present on the bus.
@@ -377,15 +393,14 @@ class NodeScanner:
         The network to use when doing active searching.
     """
 
-    #: Activate or deactivate scanning
-    active = True
-
     SERVICES = (0x700, 0x580, 0x180, 0x280, 0x380, 0x480, 0x80)
 
     def __init__(self, network: Optional[Network] = None):
-        self.network = network
+        if network is None:
+            network = _UNINITIALIZED_NETWORK
+        self.network: Network = network
         #: A :class:`list` of nodes discovered
-        self.nodes: List[int] = []
+        self.nodes: list[int] = []
 
     def on_message_received(self, can_id: int):
         service = can_id & 0x780
@@ -399,8 +414,6 @@ class NodeScanner:
 
     def search(self, limit: int = 127) -> None:
         """Search for nodes by sending SDO requests to all node IDs."""
-        if self.network is None:
-            raise RuntimeError("A Network is required to do active scanning")
         sdo_req = b"\x40\x00\x10\x00\x00\x00\x00\x00"
         for node_id in range(1, limit + 1):
             self.network.send_message(0x600 + node_id, sdo_req)

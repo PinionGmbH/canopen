@@ -30,11 +30,14 @@ Examples
 --------
 
 SDO objects can be accessed using the ``.sdo`` member which works like a Python
-dictionary. Indexes and subindexes can be identified by either name or number.
+dictionary. Indexes can be identified by either name or number.
+There are two ways to idenity subindexes, either by using the index and subindex
+as separate arguments or by using a combined syntax using a dot.
 The code below only creates objects, no messages are sent or received yet::
 
     # Complex records
     command_all = node.sdo['ApplicationCommands']['CommandAll']
+    command_all = node.sdo['ApplicationCommands.CommandAll']
     actual_speed = node.sdo['ApplicationStatus']['ActualSpeed']
     control_mode = node.sdo['ApplicationSetupParameters']['RequestedControlMode']
 
@@ -47,7 +50,7 @@ The code below only creates objects, no messages are sent or received yet::
 To actually read or write the variables, use the ``.raw``, ``.phys``, ``.desc``,
 or ``.bits`` attributes::
 
-    print("The device type is 0x%X" % device_type.raw)
+    print(f"The device type is 0x{device_type.raw:X}")
 
     # Using value descriptions instead of integers (if supported by OD)
     control_mode.desc = 'Speed Mode'
@@ -56,11 +59,11 @@ or ``.bits`` attributes::
     command_all.bits[3] = 1
 
     # Read and write physical values scaled by a factor (if supported by OD)
-    print("The actual speed is %f rpm" % actual_speed.phys)
+    print(f"The actual speed is {actual_speed.phys} rpm")
 
     # Iterate over arrays or records
     for error in error_log.values():
-        print("Error 0x%X was found in the log" % error.raw)
+        print(f"Error 0x{error.raw:X} was found in the log")
 
 It is also possible to read and write to variables that are not in the Object
 Dictionary, but only using raw bytes::
@@ -186,7 +189,10 @@ API
 
     .. describe:: iter(record)
 
-       Return an iterator over the subindexes from the record.
+       Return an iterator over the subindexes from the record.  Only those with
+       a matching object dictionary entry are considered.  The "highest
+       subindex" entry is officially not part of the data and thus skipped in
+       the yielded values.
 
     .. describe:: subindex in record
 
@@ -195,7 +201,9 @@ API
 
     .. describe:: len(record)
 
-       Return the number of subindexes in the record.
+       Return the number of subindexes in the record, not counting the "highest
+       subindex" entry itself.  Only those with a matching object dictionary
+       entry are considered.
 
     .. method:: values()
 
@@ -217,25 +225,27 @@ API
     .. describe:: iter(array)
 
        Return an iterator over the subindexes from the array.
-       This will make a SDO read operation on subindex 0 in order to get the
-       actual length of the array.
+       This will make an SDO read operation on subindex 0 in order to get the
+       actual length of the array.  This "highest subindex" entry is officially
+       not part of the data and thus skipped in the yielded values.
 
     .. describe:: subindex in array
 
        Return ``True`` if the subindex (as int) or name (as string) exists in
        the array.
-       This will make a SDO read operation on subindex 0 in order to get the
+       This will make an SDO read operation on subindex 0 in order to get the
        actual length of the array.
 
     .. describe:: len(array)
 
-       Return the length of the array.
-       This will make a SDO read operation on subindex 0.
+       Return the length of the array, not counting the "highest subindex" entry
+       itself.
+       This will make an SDO read operation on subindex 0.
 
     .. method:: values()
 
        Return a list of :class:`canopen.sdo.SdoVariable` in the array.
-       This will make a SDO read operation on subindex 0 in order to get the
+       This will make an SDO read operation on subindex 0 in order to get the
        actual length of the array.
 
 

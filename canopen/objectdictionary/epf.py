@@ -1,11 +1,9 @@
-try:
-    import xml.etree.cElementTree as etree
-except ImportError:
-    import xml.etree.ElementTree as etree
 import logging
+import xml.etree.ElementTree as etree
 
 from canopen import objectdictionary
 from canopen.objectdictionary import ObjectDictionary
+
 
 logger = logging.getLogger(__name__)
 
