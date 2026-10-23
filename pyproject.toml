@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "canopen"
+name = "pinion-canopen"
 authors = [
     {name = "Christian Sandberg", email = "christiansandberg@me.com"},
     {name = "André Colomb", email = "src@andre.colomb.de"},
